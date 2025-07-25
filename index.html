@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LSTM Stock Prediction Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 2s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .stock-card {
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .stock-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        #chart-container {
+            min-height: 500px;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-10 text-center">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">LSTM Stock Price Predictor</h1>
+            <p class="text-xl text-gray-600">Real-time predictions using Long Short-Term Memory neural networks</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="stock-card bg-white p-6 rounded-xl shadow-md">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Select Stock</h3>
+                <select id="stock-select" class="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="AAPL">Apple (AAPL)</option>
+                    <option value="MSFT">Microsoft (MSFT)</option>
+                    <option value="GOOGL">Alphabet (GOOGL)</option>
+                    <option value="AMZN">Amazon (AMZN)</option>
+                    <option value="TSLA">Tesla (TSLA)</option>
+                    <option value="META">Meta (META)</option>
+                    <option value="NFLX">Netflix (NFLX)</option>
+                </select>
+            </div>
+
+            <div class="stock-card bg-white p-6 rounded-xl shadow-md">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Time Period</h3>
+                <select id="time-period" class="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="1mo">1 Month</option>
+                    <option value="3mo" selected>3 Months</option>
+                    <option value="6mo">6 Months</option>
+                    <option value="1y">1 Year</option>
+                    <option value="2y">2 Years</option>
+                </select>
+            </div>
+
+            <div class="stock-card bg-white p-6 rounded-xl shadow-md">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Prediction Days</h3>
+                <select id="prediction-days" class="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="7">7 Days</option>
+                    <option value="14" selected>14 Days</option>
+                    <option value="30">30 Days</option>
+                </select>
+            </div>
+
+            <div class="stock-card bg-white p-6 rounded-xl shadow-md flex flex-col">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Actions</h3>
+                <button id="predict-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition w-full mt-auto">
+                    Run Prediction
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <!-- Stock Info Card -->
+            <div class="bg-white p-6 rounded-xl shadow-md">
+                <div class="flex items-center mb-4">
+                    <img src="https://placehold.co/50x50/gray/white?text=---" alt="Company logo placeholder" class="w-12 h-12 rounded-full" id="company-logo">
+                    <div class="ml-4">
+                        <h2 class="text-2xl font-bold text-gray-800" id="company-name">Apple Inc.</h2>
+                        <p class="text-gray-600" id="stock-symbol">AAPL</p>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mt-6">
+                    <div>
+                        <p class="text-sm text-gray-500">Current Price</p>
+                        <p class="text-xl font-semibold" id="current-price">$---</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Change</p>
+                        <p class="text-xl font-semibold" id="price-change">
+                            <span id="change-amount">$---</span> 
+                            <span id="change-percent">(---%)</span>
+                        </p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Market Cap</p>
+                        <p class="text-xl font-semibold" id="market-cap">$---</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">PE Ratio</p>
+                        <p class="text-xl font-semibold" id="pe-ratio">---</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Current Market Data -->
+            <div class="bg-white p-6 rounded-xl shadow-md">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Today's Market</h3>
+                <div id="market-indicators" class="grid grid-cols-2 gap-4">
+                    <div>
+                        <p class="text-sm text-gray-500">Open</p>
+                        <p class="text-lg font-medium" id="today-open">$---</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">High</p>
+                        <p class="text-lg font-medium" id="today-high">$---</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Low</p>
+                        <p class="text-lg font-medium" id="today-low">$---</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Volume</p>
+                        <p class="text-lg font-medium" id="today-volume">---</p>
+                    </div>
+                </div>
+                
+                <div class="mt-6">
+                    <p class="text-sm text-gray-500">Previous Close</p>
+                    <p class="text-xl font-semibold" id="prev-close">$---</p>
+                </div>
+            </div>
+
+            <!-- Model Performance -->
+            <div class="bg-white p-6 rounded-xl shadow-md">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Model Metrics</h3>
+                <div class="space-y-4">
+                    <div>
+                        <p class="text-sm text-gray-500">Training Loss (MSE)</p>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div class="bg-blue-600 h-2.5 rounded-full" id="mse-bar" style="width: 0%"></div>
+                        </div>
+                        <p class="text-sm text-right mt-1" id="mse-value">---</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Prediction Accuracy</p>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div class="bg-green-600 h-2.5 rounded-full" id="accuracy-bar" style="width: 0%"></div>
+                        </div>
+                        <p class="text-sm text-right mt-1" id="accuracy-value">---</p>
+                    </div>
+                    <div class="pt-4 border-t border-gray-200">
+                        <p class="text-sm text-gray-500">Next Day Prediction</p>
+                        <p class="text-2xl font-bold" id="next-day-pred">$---</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Chart -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Price History & Prediction</h2>
+                <div class="flex space-x-2">
+                    <button id="price-btn" class="bg-blue-100 text-blue-800 px-3 py-1 rounded-md text-sm font-medium">Price</button>
+                    <button id="volume-btn" class="bg-gray-100 text-gray-800 px-3 py-1 rounded-md text-sm font-medium">Volume</button>
+                </div>
+            </div>
+            <div id="chart-container"></div>
+        </div>
+
+        <!-- Model Details -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-8">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">LSTM Model Architecture</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Network Structure</h3>
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <pre class="text-sm text-gray-700 overflow-auto">
+Input Layer: (60, 1)
+LSTM Layer 1: 100 units, return_sequences=True
+Dropout: 0.2
+LSTM Layer 2: 100 units
+Dropout: 0.2
+Dense Layer: 1 unit
+Optimizer: Adam
+Loss: Mean Squared Error
+Epochs: 20
+Batch Size: 32
+                        </pre>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Training Parameters</h3>
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <p class="text-sm text-gray-700 mb-2"><strong>Sequence Length:</strong> 60 days</p>
+                        <p class="text-sm text-gray-700 mb-2"><strong>Training Ratio:</strong> 70% of data</p>
+                        <p class="text-sm text-gray-700 mb-2"><strong>Validation Ratio:</strong> 20% of data</p>
+                        <p class="text-sm text-gray-700 mb-2"><strong>Test Ratio:</strong> 10% of data</p>
+                        <p class="text-sm text-gray-700 mb-2"><strong>Normalization:</strong> Min-Max Scaling (0-1)</p>
+                        <p class="text-sm text-gray-700"><strong>Learning Rate:</strong> 0.001</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white p-8 rounded-xl max-w-md text-center">
+                <div class="loader mx-auto mb-4"></div>
+                <p class="text-lg font-semibold text-gray-800">Training LSTM Model</p>
+                <p id="loading-text" class="text-gray-600 mt-2">Initializing model parameters...</p>
+                <div class="w-full bg-gray-200 rounded-full h-2 mt-4">
+                    <div id="training-progress" class="bg-blue-600 h-2 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let stockData = null;
+        let model = null;
+        let scaler = {};
+        let currentChart = null;
+
+        // DOM elements
+        const predictBtn = document.getElementById('predict-btn');
+        const stockSelect = document.getElementById('stock-select');
+        const timePeriod = document.getElementById('time-period');
+        const predictionDays = document.getElementById('prediction-days');
+        const loading = document.getElementById('loading');
+        const loadingText = document.getElementById('loading-text');
+        const trainingProgress = document.getElementById('training-progress');
+        const priceBtn = document.getElementById('price-btn');
+        const volumeBtn = document.getElementById('volume-btn');
+        const chartContainer = document.getElementById('chart-container');
+
+        // Function to format large numbers
+        function formatNumber(num) {
+            if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
+            if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+            if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+            if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+            return num.toFixed(2);
+        }
+
+        // Function to format currency
+        function formatCurrency(num) {
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+        }
+
+        // Function to fetch stock data from Alpha Vantage API
+        async function fetchStockData(symbol, period) {
+            try {
+                // Show loading indicator
+                loading.classList.remove('hidden');
+                loadingText.textContent = `Fetching ${symbol} stock data...`;
+
+                // In a real implementation, replace this with actual API call to Alpha Vantage or similar
+                // This is a mock implementation for demonstration
+                const intervalMap = {
+                    '1mo': 'daily',
+                    '3mo': 'daily',
+                    '6mo': 'daily',
+                    '1y': 'weekly',
+                    '2y': 'weekly'
+                };
+
+                // Mock data generation (in reality, use axios to fetch from API)
+                const days = {
+                    '1mo': 30,
+                    '3mo': 90,
+                    '6mo': 180,
+                    '1y': 365,
+                    '2y': 730
+                }[period];
+
+                // Generate mock stock data (sin wave with noise to simulate stock movements)
+                const basePrice = 100 + Math.random() * 100;
+                const volatility = 0.05 + Math.random() * 0.08;
+                const trendStrength = 0.1 + Math.random() * 0.3;
+                
+                const mockData = [];
+                let currentPrice = basePrice;
+                const today = new Date();
+                
+                for (let i = days; i >= 0; i--) {
+                    const date = new Date(today);
+                    date.setDate(date.getDate() - i);
+                    
+                    // Generate random noise
+                    const noise = (Math.random() * 2 - 1) * volatility * currentPrice;
+                    const trend = trendStrength * i/days * currentPrice;
+                    
+                    currentPrice += noise + trend;
+                    
+                    // Ensure price doesn't go negative
+                    currentPrice = Math.max(5, currentPrice);
+                    
+                    mockData.push({
+                        date: date.toISOString().split('T')[0],
+                        open: currentPrice * (0.99 + Math.random() * 0.02),
+                        high: currentPrice * (1.00 + Math.random() * 0.03),
+                        low: currentPrice * (0.97 + Math.random() * 0.02),
+                        close: currentPrice,
+                        volume: Math.floor(1e6 + Math.random() * 9e6)
+                    });
+                }
+
+                // Simulate API delay
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                return mockData;
+            } catch (error) {
+                console.error('Error fetching stock data:', error);
+                return null;
+            }
+        }
+
+        // Function to preprocess data for LSTM
+        function preprocessData(data) {
+            // Extract closing prices
+            const prices = data.map(d => d.close);
+            
+            // Normalize data
+            const min = Math.min(...prices);
+            const max = Math.max(...prices);
+            
+            // Store scaler parameters for inverse transform later
+            scaler = { min, max };
+            
+            // Normalize to [0, 1] range
+            const scaledData = prices.map(price => (price - min) / (max - min));
+            
+            return scaledData;
+        }
+
+        // Function to create sequences for LSTM
+        function createSequences(data, sequenceLength) {
+            const x = [];
+            const y = [];
+            
+            for (let i = sequenceLength; i < data.length; i++) {
+                x.push(data.slice(i - sequenceLength, i));
+                y.push(data[i]);
+            }
+            
+            return { x, y };
+        }
+
+        // Function to build LSTM model
+        function buildModel(sequenceLength) {
+            // Clear any existing models
+            if (model) {
+                model.dispose();
+            }
+            
+            model = tf.sequential();
+            
+            // First LSTM layer
+            model.add(tf.layers.lstm({
+                units: 100,
+                returnSequences: true,
+                inputShape: [sequenceLength, 1]
+            }));
+            model.add(tf.layers.dropout({ rate: 0.2 }));
+            
+            // Second LSTM layer
+            model.add(tf.layers.lstm({
+                units: 100,
+                returnSequences: false
+            }));
+            model.add(tf.layers.dropout({ rate: 0.2 }));
+            
+            // Output layer
+            model.add(tf.layers.dense({ units: 1 }));
+            
+            // Compile the model
+            model.compile({
+                optimizer: tf.train.adam(0.001),
+                loss: 'meanSquaredError'
+            });
+            
+            return model;
+        }
+
+        // Function to train the model
+        async function trainModel(model, xTrain, yTrain, epochs = 20, batchSize = 32) {
+            // Convert data to tensors
+            const xs = tf.tensor3d(xTrain, [xTrain.length, xTrain[0].length, 1]);
+            const ys = tf.tensor2d(yTrain, [yTrain.length, 1]);
+            
+            // Train the model
+            const history = await model.fit(xs, ys, {
+                epochs,
+                batchSize,
+                validationSplit: 0.2,
+                callbacks: {
+                    onEpochEnd: async (epoch, logs) => {
+                        // Update loading text and progress
+                        const progress = ((epoch + 1) / epochs) * 100;
+                        trainingProgress.style.width = `${progress}%`;
+                        loadingText.textContent = `Training epoch ${epoch + 1}/${epochs} (MSE: ${logs.loss.toFixed(6)})`;
+                        
+                        // Yield to UI thread
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                }
+            });
+            
+            // Clean up tensors
+            tf.dispose([xs, ys]);
+            
+            return history;
+        }
+
+        // Function to make predictions
+        function makePredictions(model, data, sequenceLength, futureDays) {
+            // Get the last sequence of historical data
+            const lastSequence = data.slice(-sequenceLength);
+            
+            // Initialize predictions array with the last actual value
+            const predictions = [lastSequence[lastSequence.length - 1]];
+            
+            // Predict future values iteratively
+            for (let i = 0; i < futureDays; i++) {
+                // Get the sequence for prediction
+                let inputSequence;
+                
+                if (i === 0) {
+                    // First prediction uses the last sequence from actual data
+                    inputSequence = lastSequence;
+                } else {
+                    // Subsequent predictions use previous predictions
+                    inputSequence = [...lastSequence.slice(i + 1), ...predictions.slice(-Math.min(sequenceLength - i, predictions.length))];
+                }
+                
+                // Pad the sequence if it's shorter than sequenceLength (shouldn't happen with our UI)
+                while (inputSequence.length < sequenceLength) {
+                    inputSequence.unshift(inputSequence[0]);
+                }
+                
+                // Make prediction
+                const inputTensor = tf.tensor2d([inputSequence], [1, sequenceLength, 1]);
+                const prediction = model.predict(inputTensor).dataSync()[0];
+                predictions.push(prediction);
+                
+                // Clean up tensor
+                tf.dispose(inputTensor);
+            }
+            
+            // Remove the first element (last actual value)
+            predictions.shift();
+            
+            return predictions;
+        }
+
+        // Function to update stock info in UI
+        function updateStockInfo(data) {
+            const symbol = stockSelect.value;
+            const lastData = data[data.length - 1];
+            const prevData = data[data.length - 2];
+            
+            // Company info
+            document.getElementById('stock-symbol').textContent = symbol;
+            document.getElementById('company-name').textContent = {
+                AAPL: 'Apple Inc.',
+                MSFT: 'Microsoft Corporation',
+                GOOGL: 'Alphabet Inc.',
+                AMZN: 'Amazon.com Inc.',
+                TSLA: 'Tesla Inc.',
+                META: 'Meta Platforms Inc.',
+                NFLX: 'Netflix Inc.'
+            }[symbol];
+            
+            // Company logo (placeholder for demo)
+            document.getElementById('company-logo').src = `https://placehold.co/50x50/gray/white?text=${symbol}`;
+            document.getElementById('company-logo').alt = `${symbol} company logo`;
+            
+            // Current price info
+            document.getElementById('current-price').textContent = formatCurrency(lastData.close);
+            document.getElementById('market-cap').textContent = formatCurrency(1e9 * (50 + Math.random() * 150)); // Mock market cap
+            document.getElementById('pe-ratio').textContent = (20 + Math.random() * 10).toFixed(2);
+            
+            // Price change
+            const change = lastData.close - prevData.close;
+            const changePercent = (change / prevData.close) * 100;
+            
+            const changeElement = document.getElementById('price-change');
+            changeElement.className = `text-xl font-semibold ${change >= 0 ? 'text-green-600' : 'text-red-600'}`;
+            
+            document.getElementById('change-amount').textContent = `${change >= 0 ? '+' : ''}${formatCurrency(change)}`;
+            document.getElementById('change-percent').textContent = `(${change >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)`;
+            
+            // Market data
+            document.getElementById('today-open').textContent = formatCurrency(lastData.open);
+            document.getElementById('today-high').textContent = formatCurrency(lastData.high);
+            document.getElementById('today-low').textContent = formatCurrency(lastData.low);
+            document.getElementById('today-volume').textContent = formatNumber(lastData.volume);
+            document.getElementById('prev-close').textContent = formatCurrency(prevData.close);
+        }
+
+        // Function to plot stock data
+        function plotStockData(data, predictions = null) {
+            // Extract data for chart
+            const dates = data.map(d => d.date);
+            const closes = data.map(d => d.close);
+            const volumes = data.map(d => d.volume);
+            
+            // If we have predictions, prepare prediction data
+            let predictionDates = [];
+            let predictionValues = [];
+            
+            if (predictions) {
+                // Create future dates for predictions
+                const lastDate = new Date(dates[dates.length - 1]);
+                
+                for (let i = 0; i < predictions.length; i++) {
+                    const newDate = new Date(lastDate);
+                    newDate.setDate(lastDate.getDate() + i + 1);
+                    predictionDates.push(newDate.toISOString().split('T')[0]);
+                    predictionValues.push(predictions[i]);
+                }
+            }
+            
+            // Create traces
+            const priceTrace = {
+                x: dates,
+                y: closes,
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Closing Price',
+                line: { color: '#3b82f6', width: 2 }
+            };
+            
+            const volumeTrace = {
+                x: dates,
+                y: volumes,
+                type: 'bar',
+                name: 'Volume',
+                yaxis: 'y2',
+                marker: { color: '#94a3b8' }
+            };
+            
+            let predictionTrace = null;
+            
+            if (predictions) {
+                predictionTrace = {
+                    x: predictionDates,
+                    y: predictionValues,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Predicted Price',
+                    line: { color: '#10b981', width: 2, dash: 'dot' },
+                    marker: { color: '#10b981', size: 8 }
+                };
+            }
+            
+            // Layout configuration
+            const layout = {
+                title: '',
+                xaxis: {
+                    title: 'Date',
+                    type: 'date'
+                },
+                yaxis: {
+                    title: 'Price (USD)',
+                    side: 'left',
+                    showgrid: true
+                },
+                yaxis2: {
+                    title: 'Volume',
+                    side: 'right',
+                    overlaying: 'y',
+                    showgrid: false
+                },
+                legend: {
+                    x: 0,
+                    y: 1.1,
+                    orientation: 'h'
+                },
+                margin: { l: 50, r: 50, b: 50, t: 30, pad: 4 },
+                hovermode: 'closest',
+                showlegend: true,
+                plot_bgcolor: 'rgba(240, 240, 240, 0.5)',
+                paper_bgcolor: 'transparent'
+            };
+            
+            // Choose which traces to show based on button state
+            const traces = [];
+            
+            if (priceBtn.classList.contains('bg-blue-100')) {
+                traces.push(priceTrace);
+                if (predictionTrace) traces.push(predictionTrace);
+            }
+            
+            if (volumeBtn.classList.contains('bg-blue-100')) {
+                traces.push(volumeTrace);
+            }
+            
+            // Plot the chart
+            if (currentChart) {
+                Plotly.react(chartContainer, traces, layout);
+            } else {
+                currentChart = Plotly.newPlot(chartContainer, traces, layout);
+            }
+        }
+
+        // Function to update model metrics
+        function updateModelMetrics(mse, predictions, actualValues) {
+            // Calculate accuracy (percentage of predictions within 2% of actual)
+            let correct = 0;
+            for (let i = 0; i < Math.min(predictions.length, actualValues.length); i++) {
+                const diff = Math.abs(predictions[i] - actualValues[i]);
+                const percentDiff = (diff / actualValues[i]) * 100;
+                if (percentDiff <= 2) correct++;
+            }
+            
+            const accuracy = (correct / Math.min(predictions.length, actualValues.length)) * 100;
+            
+            // Update MSE
+            document.getElementById('mse-value').textContent = mse.toExponential(4);
+            document.getElementById('mse-bar').style.width = `${Math.min(100, 100 - (mse * 1000))}%`;
+            
+            // Update accuracy
+            document.getElementById('accuracy-value').textContent = `${accuracy.toFixed(1)}%`;
+            document.getElementById('accuracy-bar').style.width = `${accuracy}%`;
+            
+            // Update next day prediction
+            if (predictions.length > 0) {
+                const nextDayPred = formatCurrency(predictions[0]);
+                document.getElementById('next-day-pred').textContent = nextDayPred;
+            }
+        }
+
+        // Main prediction function
+        async function runPrediction() {
+            try {
+                const symbol = stockSelect.value;
+                const period = timePeriod.value;
+                const futureDays = parseInt(predictionDays.value);
+                const sequenceLength = 60; // Using last 60 days to predict next value
+                
+                // Show loading indicator
+                loading.classList.remove('hidden');
+                
+                // 1. Fetch stock data
+                loadingText.textContent = `Fetching ${symbol} stock data...`;
+                stockData = await fetchStockData(symbol, period);
+                
+                if (!stockData || stockData.length === 0) {
+                    throw new Error('Failed to fetch stock data');
+                }
+                
+                // Update stock info in UI
+                updateStockInfo(stockData);
+                
+                // 2. Preprocess data
+                loadingText.textContent = 'Preprocessing data...';
+                const scaledData = preprocessData(stockData);
+                const { x: sequences, y: targets } = createSequences(scaledData, sequenceLength);
+                
+                // Split into training (70%) and test (30%) sets
+                const splitIndex = Math.floor(sequences.length * 0.7);
+                const xTrain = sequences.slice(0, splitIndex);
+                const yTrain = targets.slice(0, splitIndex);
+                const xTest = sequences.slice(splitIndex);
+                const yTest = targets.slice(splitIndex);
+                
+                // 3. Build and train model
+                loadingText.textContent = 'Building LSTM model...';
+                model = buildModel(sequenceLength);
+                
+                loadingText.textContent = 'Training model...';
+                const history = await trainModel(model, xTrain, yTrain);
+                
+                // 4. Make predictions
+                loadingText.textContent = 'Making predictions...';
+                
+                // Predict on test set
+                const testPredictions = makePredictions(model, scaledData.slice(0, splitIndex + sequenceLength), sequenceLength, xTest.length);
+                
+                // Predict future values
+                const futurePredictions = makePredictions(model, scaledData, sequenceLength, futureDays);
+                
+                // Denormalize predictions
+                const denormalize = value => value * (scaler.max - scaler.min) + scaler.min;
+                const denormTestPreds = testPredictions.map(denormalize);
+                const denormFuturePreds = futurePredictions.map(denormalize);
+                
+                // Get actual test values (denormalized)
+                const actualTestValues = yTest.map((value, i) => {
+                    const denormValue = denormalize(value);
+                    return denormValue;
+                });
+                
+                // Calculate MSE on test set
+                let mse = 0;
+                for (let i = 0; i < denormTestPreds.length; i++) {
+                    const error = denormTestPreds[i] - actualTestValues[i];
+                    mse += error * error;
+                }
+                mse /= denormTestPreds.length;
+                
+                // 5. Update UI with results
+                updateModelMetrics(mse, denormTestPreds, actualTestValues);
+                
+                // Plot the data and predictions
+                plotStockData(stockData, denormFuturePreds);
+                
+                // Hide loading indicator
+                loading.classList.add('hidden');
+                
+            } catch (error) {
+                console.error('Prediction error:', error);
+                loadingText.textContent = `Error: ${error.message}`;
+                
+                // Hide loading after delay to show error
+                setTimeout(() => {
+                    loading.classList.add('hidden');
+                }, 3000);
+            }
+        }
+
+        // Event listeners
+        predictBtn.addEventListener('click', runPrediction);
+        
+        priceBtn.addEventListener('click', () => {
+            priceBtn.classList.remove('bg-gray-100', 'text-gray-800');
+            priceBtn.classList.add('bg-blue-100', 'text-blue-800');
+            volumeBtn.classList.remove('bg-blue-100', 'text-blue-800');
+            volumeBtn.classList.add('bg-gray-100', 'text-gray-800');
+            if (stockData) plotStockData(stockData);
+        });
+        
+        volumeBtn.addEventListener('click', () => {
+            volumeBtn.classList.remove('bg-gray-100', 'text-gray-800');
+            volumeBtn.classList.add('bg-blue-100', 'text-blue-800');
+            priceBtn.classList.remove('bg-blue-100', 'text-blue-800');
+            priceBtn.classList.add('bg-gray-100', 'text-gray-800');
+            if (stockData) plotStockData(stockData);
+        });
+
+        // Initialize with AAPL data
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Run first prediction
+            await runPrediction();
+        });
+    </script>
+</body>
+</html>
